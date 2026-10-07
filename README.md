@@ -417,3 +417,17 @@ Please reference our work if you find *TradingAgents* provides you with some hel
       url={https://arxiv.org/abs/2412.20138}, 
 }
 ```
+
+## Apex WSGTA automation layer (this fork, DRY-RUN ONLY)
+
+This fork adds `apex/` and `run_apex_automation.py`, a futures day-trading automation layer for
+Apex-funded evaluation accounts. It has a deterministic risk governor, a WSGTA LangGraph, and an
+Obsidian-style memory vault. It never sends orders: the execution sink only writes the bracket JSON to disk.
+
+```bash
+python run_apex_automation.py --mode dry-run --tier 50K --eval-type EOD --offline --verbose
+```
+
+**Apex tier numbers are UNVERIFIED. Check apextraderfunding.com.** They come from the design document and
+conflict with third-party summaries of Apex's 2026 rules. See [docs/APEX_AUTOMATION.md](docs/APEX_AUTOMATION.md)
+for the architecture, configuration, the doc discrepancies, and what is not built yet.
