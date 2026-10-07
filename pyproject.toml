@@ -47,7 +47,7 @@ tradingagents = "cli.main:app"
 version = {attr = "tradingagents.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "cli*"]
+include = ["tradingagents*", "cli*", "apex*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
