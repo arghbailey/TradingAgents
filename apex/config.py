@@ -1,14 +1,14 @@
 """Apex account tiers, contract specifications and risk parameters.
 
-UNVERIFIED — check apextraderfunding.com before relying on any tier number below.
+The tier table follows Apex's own help-center evaluation pages, read 2026-10-07:
+https://apextraderfunding.com/help-center/evaluation-accounts-ea/eod-evaluations/ and
+.../intraday-trailing-drawdown-evaluations/. Only 25K/50K/100K/150K exist. The design
+document's numbers (50K: $2,500 drawdown, $650 daily loss, 10 contracts, 30% consistency
+cap, 250K/300K tiers) are out of date. Override a tier with ``register_tier``. The rest of
+the code reads tiers only through ``get_tier``.
 
-The tier table reproduces the Apex design document. Apex's own site refused an
-automated fetch (HTTP 403) when this was written (2026-10), and third-party summaries
-of Apex's March 2026 rule overhaul disagree with the design document. For example, they
-list the 50K evaluation at a $2,000 drawdown, 6 contracts and a $1,000 daily loss limit,
-and they list no 250K/300K evaluations. Treat every number here as a placeholder you
-must confirm. Override a tier with ``ApexAccountTier(...)`` or ``register_tier``. The
-rest of the code reads tiers only through ``get_tier``.
+Still unverified: the micro-contract allowance (Apex lists one "Max Contracts" number),
+and whether the +$100 threshold freeze applies during evaluations.
 """
 
 from __future__ import annotations
@@ -42,11 +42,13 @@ class ApexAccountTier:
     max_contracts_mini: int
     max_contracts_micro: int
     daily_loss_limit: float
-    consistency_cap_ratio: float = 0.30
+    consistency_cap_ratio: float | None = None  # Apex evaluations apply none
 
     @property
     def max_single_day_profit(self) -> float:
         """Consistency cap: the most one day may contribute toward the profit target."""
+        if self.consistency_cap_ratio is None:
+            return float("inf")
         return self.profit_target * self.consistency_cap_ratio
 
     @property
@@ -55,16 +57,18 @@ class ApexAccountTier:
         return self.nominal_size + 100
 
 
-# UNVERIFIED — check apextraderfunding.com. Values are from the design document.
+# Apex help center, EOD and intraday evaluation pages, read 2026-10-07. The daily loss
+# limit is Apex's EOD-evaluation DLL; intraday evaluations have none, and the governor
+# keeps it there as a self-imposed halt.
+# ponytail: micros capped 1:1 with minis because Apex states a single "Max Contracts"
+# figure; raise max_contracts_micro once Apex confirms a micro allowance.
 _TIERS: dict[str, ApexAccountTier] = {
     t.name: t
     for t in (
-        ApexAccountTier("25K", 25_000, 1_500, 1_500, 4, 40, 400),
-        ApexAccountTier("50K", 50_000, 3_000, 2_500, 10, 100, 650),
-        ApexAccountTier("100K", 100_000, 6_000, 3_000, 14, 140, 750),
-        ApexAccountTier("150K", 150_000, 9_000, 5_000, 17, 170, 1_250),
-        ApexAccountTier("250K", 250_000, 15_000, 6_500, 27, 270, 1_600),
-        ApexAccountTier("300K", 300_000, 20_000, 7_500, 35, 350, 1_900),
+        ApexAccountTier("25K", 25_000, 1_500, 1_000, 4, 4, 500),
+        ApexAccountTier("50K", 50_000, 3_000, 2_000, 6, 6, 1_000),
+        ApexAccountTier("100K", 100_000, 6_000, 3_000, 8, 8, 1_500),
+        ApexAccountTier("150K", 150_000, 9_000, 4_000, 12, 12, 2_000),
     )
 }
 

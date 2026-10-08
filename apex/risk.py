@@ -7,14 +7,15 @@ the calendar, the quote and the order geometry alone.
 Rules implemented (tier numbers come from ``apex.config``; 50K values in brackets):
 
 * Effective-equity sizing: max risk per trade = effective drawdown buffer x risk
-  fraction, with the fraction clamped to [1%, 2%] ($25-$50 on a $2,500 buffer).
+  fraction, with the fraction clamped to [1%, 2%] ($20-$40 on a $2,000 buffer).
 * Trailing drawdown: LEGACY ratchets on the intraday (unrealized) high-water mark;
   EOD ratchets only on the end-of-day realized balance. The threshold stops trailing
   for good once it reaches ``nominal + $100`` (the freeze level).
-* Daily loss halt at the tier's daily_loss_limit (-$650): flatten and lock until the
+* Daily loss halt at the tier's daily_loss_limit (-$1,000): flatten and lock until the
   next session. Soft warning at 15% of the daily budget halves size. Within 15% of the
   circuit breaker, new entries are rejected.
-* Consistency cap: no new positions once the day's profit >= max_single_day_profit ($900).
+* Consistency cap: no new positions once the day's profit >= max_single_day_profit. Off
+  for Apex evaluations (no consistency rule); set ``consistency_cap_ratio`` to enable.
 * Consecutive losses: 2 stop-outs -> 60-minute cooldown; 3 -> session shutdown.
 * News lockout: no new orders, and flatten, from T-5 to T+5 minutes (inclusive) around
   FOMC/CPI/PPI/NFP/GDP.

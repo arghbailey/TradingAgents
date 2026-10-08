@@ -76,7 +76,7 @@ def test_cli_offline_end_to_end(tmp_path, capsys):
 
 def test_cli_account_json_drives_halt(tmp_path, capsys):
     acct = tmp_path / "acct.json"
-    acct.write_text(json.dumps({"balance": 49_350.0}), encoding="utf-8")  # -650 on the day
+    acct.write_text(json.dumps({"balance": 49_000.0}), encoding="utf-8")  # -1,000 on the day
     rc = cli.main(["--mode", "dry-run", "--offline", "--date", "2026-10-07", "--account-json", str(acct),
                    "--vault", str(tmp_path / "v"), "--out", str(tmp_path / "o")])
     assert rc == 0

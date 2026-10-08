@@ -10,7 +10,7 @@ futures evaluation accounts (MES, MNQ, ES, NQ). It is **dry-run only**:
   parses that rating strictly and checks it against the detected setup, and the
   Apex Risk Governor alone decides whether an order exists and how big it is.
 
-> **Tier numbers are UNVERIFIED. Check them at apextraderfunding.com.** See [Doc discrepancies](#doc-discrepancies).
+> **Tier numbers follow Apex's help-center evaluation pages (read 2026-10-07).** The micro allowance and the evaluation freeze are still unverified. See [Doc discrepancies](#doc-discrepancies).
 
 ## Six-stage cycle
 
@@ -53,13 +53,13 @@ State: `apex/state.py::WSGTAState` holds every field from the design, plus bookk
 The rules are listed below in evaluation order. Any one of them can reject; sizing comes last.
 
 1. Account breached (equity <= trailing threshold): reject, flatten, lock.
-2. Daily loss <= -`daily_loss_limit` (exactly -$650 on 50K halts): reject, flatten, lock until `new_session()`.
+2. Daily loss <= -`daily_loss_limit` (exactly -$1,000 on 50K halts): reject, flatten, lock until `new_session()`.
 3. Session locked.
 4. 3 consecutive stop-outs: session shutdown. 2 stop-outs: 60-minute cooldown from the last stop-out.
 5. News lockout from T-5 to T+5 minutes, both ends inclusive, around FOMC/CPI/PPI/NFP/GDP (or any event marked high impact): reject and flatten.
 6. Session clock: before 09:30 closed; 09:30-09:45 no entries; 09:45-11:30 prime; 11:30-13:30 half size;
    13:30-15:45 A+ only; 15:45-15:55 no new entries; at or after 15:55 mandatory flatten.
-7. Consistency cap: day P&L >= `profit_target x 0.30` ($900 on 50K) blocks new positions.
+7. Consistency cap: day P&L >= `profit_target x consistency_cap_ratio` blocks new positions. Off for every Apex tier (evaluations have no consistency rule); set the ratio on a custom tier to enable it.
 8. Within 15% of the daily circuit breaker (remaining budget <= 15% of the limit): reject.
 9. Spread wider than 2 ticks: reject.
 10. Sizing: budget = effective buffer x risk fraction, clamped to [1%, 2%], times the multipliers
@@ -75,7 +75,7 @@ Trailing drawdown (`AccountState`):
 - **EOD**: the high-water mark moves only on `end_of_day()` with the realized balance.
 - The threshold is `HWM - total_drawdown`, capped at `nominal + 100`. Once it reaches that
   level it is frozen permanently.
-- Worked example (50K, $2,500 DD), a trade that runs to +$800 and closes at +$200: LEGACY threshold
+- Worked example (the design doc's 50K: $2,500 DD; the test fixture `DOC50K`), a trade that runs to +$800 and closes at +$200: LEGACY threshold
   48,300 (buffer 1,900, max risk $38); EOD threshold 47,500 intraday, then 47,700 at the close
   (buffer 2,500, max risk $50).
 
@@ -146,7 +146,7 @@ Both directories are gitignored.
 
 | Setting | Where | Default |
 |---------|-------|---------|
-| Tier table | `apex/config.py::_TIERS`, `register_tier()` | design-doc values (UNVERIFIED) |
+| Tier table | `apex/config.py::_TIERS`, `register_tier()` | Apex help-center values, 2026-10-07 |
 | Risk knobs | `apex/config.py::RiskParams` | 2% risk fraction, [1%, 2%] clamp, 15% soft/circuit, 2-tick spread, 2/3-loss rules, +/-5 min news window, ADX 20, 2 debate rounds, 2 resize iterations |
 | Bracket knobs | `BracketParams` | stops 4/16 pts, C1 2.5/12 pts, LEGACY 70% @ 1.5R, BE @ 1R |
 | Setup knobs | `SetupParams` | DB/DT 10/30 pts, max 3 bars past cross, RSI 80/20 |
@@ -194,11 +194,13 @@ These are the places where this build deviates from the design documents, and wh
    `LLMSentiment` and `FixtureSentiment` as working implementations. Perplexity has no upstream provider, so it is
    reached through `openai_compatible` + `base_url`. That provider uses one global `OPENAI_COMPATIBLE_API_KEY`,
    which means two different keyed `openai_compatible` roles cannot coexist. The local Ollama profile is the default.
-8. **Tier numbers are unverified.** apextraderfunding.com returned HTTP 403 to automated fetches. Third-party
-   summaries of Apex's March 2026 rules (e.g. tradetanto.com) conflict with the design doc. They list 25K: $1,000 DD / 4 contracts;
-   50K: $2,000 DD / 6 contracts / $1,000 DLL (EOD only); 100K: $3,000 / 8; 150K: $4,000 / 12; no 250K/300K
-   evaluations; no consistency rule during evaluation; the freeze at +$100 applying to PA accounts. The design-doc
-   values are kept, as instructed, and marked UNVERIFIED in code. Use `register_tier()` to correct them.
+8. **Tier numbers corrected (2026-10-07).** Apex's own EOD and intraday evaluation pages, read in a browser
+   (automated fetches get HTTP 403), list 25K: $1,500 target / $1,000 DD / 4 contracts / $500 DLL;
+   50K: $3,000 / $2,000 / 6 / $1,000; 100K: $6,000 / $3,000 / 8 / $1,500; 150K: $9,000 / $4,000 / 12 / $2,000.
+   The DLL applies to EOD evaluations only. There are no 250K/300K evaluations and no consistency rule or scaling
+   during evaluation. The design doc's numbers ($2,500 DD, $650 DLL, 10 contracts, 30% cap) were replaced. Still
+   unverified: the micro allowance (capped 1:1 with minis until Apex confirms) and whether the +$100 freeze applies
+   during evaluations (third-party summaries tie it to PA accounts). Use `register_tier()` to override.
 9. **Freeze interpretation.** "Trailing stops once equity >= initial + $100" is implemented as Apex
    describes it: the threshold stops trailing once it reaches `nominal + $100`, which happens when the peak
    balance reaches `nominal + DD + $100`.

@@ -26,7 +26,7 @@ ALLOWED_MODES = ("dry-run",)
 def _parse_args(argv):
     p = argparse.ArgumentParser(description="Apex WSGTA automation (DRY-RUN ONLY).")
     p.add_argument("--mode", required=True, help="must be 'dry-run'; live modes do not exist")
-    p.add_argument("--tier", default="50K", help="Apex tier: 25K, 50K, 100K, 150K, 250K, 300K")
+    p.add_argument("--tier", default="50K", help="Apex tier: 25K, 50K, 100K, 150K")
     p.add_argument("--eval-type", default="EOD", help="EOD or LEGACY")
     p.add_argument("--symbol", default="MNQ", help="MNQ, MES, NQ or ES")
     p.add_argument("--date", default=None, help="trade date YYYY-MM-DD (default: today)")

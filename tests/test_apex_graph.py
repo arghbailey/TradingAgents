@@ -98,7 +98,7 @@ def test_news_blackout_routes_to_circuit_breaker(tmp_path):
 
 def test_daily_halt_routes_to_circuit_breaker(tmp_path):
     acct = AccountState.fresh(get_tier("50K"), EvaluationType.EOD)
-    acct.mark_to_market(-650.0)
+    acct.mark_to_market(-1_000.0)
     final = run_cycle(make_deps(tmp_path, account=acct), "MNQ", DAY.isoformat())
     assert final["daily_loss_halt"] and final["order_action"] == "HALT_FLATTEN"
     assert dispatched(tmp_path) == []

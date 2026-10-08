@@ -139,10 +139,13 @@ def test_legacy_bracket_scales_70_percent_at_1_5r_and_breakeven_at_1r():
     assert b["stop_management"]["move_to_breakeven_at"] == 6004.0
 
 
-def test_tier_table_values_match_design_doc():
+def test_tier_table_values_match_apex_help_center():
+    # apextraderfunding.com EOD evaluation page, read 2026-10-07.
     t = get_tier("50K")
     assert (t.nominal_size, t.profit_target, t.total_drawdown, t.max_contracts_mini,
-            t.max_contracts_micro, t.daily_loss_limit) == (50_000, 3_000, 2_500, 10, 100, 650)
-    assert get_tier("300k").max_contracts_micro == 350
-    with pytest.raises(ValueError):
-        get_tier("75K")
+            t.max_contracts_micro, t.daily_loss_limit) == (50_000, 3_000, 2_000, 6, 6, 1_000)
+    assert t.max_single_day_profit == float("inf")  # no consistency rule in evaluation
+    assert get_tier("150k").total_drawdown == 4_000
+    for gone in ("75K", "250K", "300K"):
+        with pytest.raises(ValueError):
+            get_tier(gone)

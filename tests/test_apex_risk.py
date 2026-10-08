@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import pytest
 
 from apex.calendar import EconomicEvent, at_et
-from apex.config import CONTRACTS, EvaluationType, RiskParams, get_tier
+from apex.config import CONTRACTS, ApexAccountTier, EvaluationType, RiskParams
 from apex.risk import (
     AccountState,
     ApexRiskGovernor,
@@ -24,7 +24,9 @@ from apex.risk import (
 pytestmark = pytest.mark.unit
 
 DAY = date(2026, 10, 7)
-T50 = get_tier("50K")
+# Boundary tests use the design doc's 50K numbers as a fixture, so they test the governor's
+# math, not Apex's current table (pinned in test_apex_setups.py).
+T50 = ApexAccountTier("DOC50K", 50_000, 3_000, 2_500, 10, 100, 650, consistency_cap_ratio=0.30)
 GOV = ApexRiskGovernor()
 
 
