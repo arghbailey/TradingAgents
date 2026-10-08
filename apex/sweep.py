@@ -38,6 +38,10 @@ from .setups import SETUPS, SetupSignal
 # ----------------------------------------------------------------------- grid
 
 TIMEFRAMES: dict[str, int | None] = {"1h": 1, "2h": 2, "4h": 4, "1d": None}  # None = calendar day
+# 5m-sourced sweep resamples causally off 5m bars instead of 1h: 1 bar = 5 min, so
+# 15m/30m/1h are 3/6/12 native bars apiece. See apex.backtest.load_bars(data="5m").
+TIMEFRAMES_5M: dict[str, int | None] = {"5m": 1, "15m": 3, "30m": 6, "1h": 12}
+TIMEFRAMES_BY_DATA: dict[str, dict[str, int | None]] = {"1h": TIMEFRAMES, "5m": TIMEFRAMES_5M}
 SESSIONS = ("all", "rth", "rth_first2h")
 REGIMES = ("none", "adx25", "ema200_long_only")
 
@@ -69,12 +73,13 @@ def _setup_param_grid() -> dict[str, list[tuple[str, SetupParams]]]:
     }
 
 
-def grid_size_per_symbol() -> int:
+def grid_size_per_symbol(data: str = "1h") -> int:
     knobs = sum(len(v) for v in _setup_param_grid().values())
-    return knobs * len(TIMEFRAMES) * len(SESSIONS) * len(REGIMES)
+    return knobs * len(TIMEFRAMES_BY_DATA[data]) * len(SESSIONS) * len(REGIMES)
 
 
-assert grid_size_per_symbol() <= 1500, "sweep grid grew past the pre-registered <=1500 cells/symbol budget"
+assert grid_size_per_symbol("1h") <= 1500, "sweep grid grew past the pre-registered <=1500 cells/symbol budget"
+assert grid_size_per_symbol("5m") <= 1500, "sweep grid grew past the pre-registered <=1500 cells/symbol budget"
 assert set(_setup_param_grid()) == set(SETUPS)
 
 # ----------------------------------------------------------------------- resampling
@@ -110,8 +115,8 @@ def resample_daily(bars: list[Bar]) -> list[Bar]:
     return out
 
 
-def resample(bars: list[Bar], timeframe: str) -> list[Bar]:
-    n = TIMEFRAMES[timeframe]
+def resample(bars: list[Bar], timeframe: str, data: str = "1h") -> list[Bar]:
+    n = TIMEFRAMES_BY_DATA[data][timeframe]
     return bars if n == 1 else (resample_daily(bars) if n is None else resample_count(bars, n))
 
 
@@ -183,13 +188,14 @@ class SweepCell:
         return self.holdout_net_pnl > self.holdout_bh and self.holdout_trades >= 20
 
 
-def run_sweep(symbol: str, tier_name: str = "50K", eval_type: str = "EOD") -> list[SweepCell]:
-    bars_1h = load_bars(symbol)
+def run_sweep(symbol: str, tier_name: str = "50K", eval_type: str = "EOD",
+             data: str = "1h") -> list[SweepCell]:
+    bars_native = load_bars(symbol, data=data)
     param_grid = _setup_param_grid()
     cells: list[SweepCell] = []
 
-    for tf in TIMEFRAMES:
-        bars_tf = resample(bars_1h, tf)
+    for tf in TIMEFRAMES_BY_DATA[data]:
+        bars_tf = resample(bars_native, tf, data=data)
         if len(bars_tf) < MIN_BARS_FOR_SIGNAL + 20:
             continue
         ind_tf = compute_indicators(bars_tf)
@@ -244,12 +250,12 @@ def write_csv(cells: list[SweepCell], path: Path) -> None:
                        c.holdout_trades, c.holdout_net_pnl, c.holdout_bh, c.clears_bar])
 
 
-def render_markdown(symbol: str, cells: list[SweepCell]) -> str:
+def render_markdown(symbol: str, cells: list[SweepCell], data: str = "1h") -> str:
     top = top_train_cells(cells)
     lines = [
-        f"# Apex WSGTA sweep: {symbol}",
+        f"# Apex WSGTA sweep: {symbol} ({data} bars)",
         "",
-        f"Grid size: {len(cells)} cells (pre-registered budget: {grid_size_per_symbol()}/symbol).",
+        f"Grid size: {len(cells)} cells (pre-registered budget: {grid_size_per_symbol(data)}/symbol).",
         "",
         "**Multiple-comparisons caveat:** the top-10 train cells are the best of "
         f"{len(cells)} tries; expect some of that train edge to be best-of-N luck rather "
@@ -280,16 +286,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--symbol", choices=["MNQ", "MES", "all"], default="all")
     ap.add_argument("--tier", default="50K")
     ap.add_argument("--eval-type", default="EOD")
+    ap.add_argument("--data", choices=["1h", "5m"], default="1h", help="bar source")
     ap.add_argument("--out-dir", default="results/backtest")
     args = ap.parse_args(argv)
 
     symbols = ["MNQ", "MES"] if args.symbol == "all" else [args.symbol]
     out_dir = Path(args.out_dir)
+    prefix = "sweep5m" if args.data == "5m" else "sweep"
     for symbol in symbols:
-        cells = run_sweep(symbol, args.tier, args.eval_type)
-        write_csv(cells, out_dir / f"sweep_{symbol}.csv")
-        md = render_markdown(symbol, cells)
-        (out_dir / f"sweep_{symbol}.md").write_text(md, encoding="utf-8")
+        cells = run_sweep(symbol, args.tier, args.eval_type, data=args.data)
+        write_csv(cells, out_dir / f"{prefix}_{symbol}.csv")
+        md = render_markdown(symbol, cells, data=args.data)
+        (out_dir / f"{prefix}_{symbol}.md").write_text(md, encoding="utf-8")
         print(f"{symbol}: {len(cells)} cells -> {verdict(top_train_cells(cells))}")
     return 0
 

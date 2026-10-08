@@ -13,11 +13,13 @@ from apex.backtest import (
     BacktestResult,
     backtest_symbol_setup,
     compute_signals,
+    load_bars,
     run_walk_forward,
 )
+from apex.calendar import at_et
 from apex.market import Bar, fixture_bars
 from apex.risk import ApexRiskGovernor, RiskDecision, Verdict
-from apex.setups import detect_setup
+from apex.setups import SetupSignal, detect_setup
 
 pytestmark = pytest.mark.unit
 
@@ -32,6 +34,62 @@ def _flat_bars(symbol: str, n: int = 60, price: float = 6000.0) -> list[Bar]:
 def test_tick_values_match_config():
     assert TICK_VALUE["MNQ"] == pytest.approx(0.50)
     assert TICK_VALUE["MES"] == pytest.approx(1.25)
+
+
+# --------------------------------------------------------------------- 5m data source
+
+
+def test_load_bars_5m_reads_csv_matching_1h_schema(tmp_path, monkeypatch):
+    import apex.backtest as backtest_mod
+
+    monkeypatch.setattr(backtest_mod, "CACHE_DIR", tmp_path)
+    (tmp_path / "MES_5m.csv").write_text(
+        "ts,open,high,low,close,volume\n"
+        "2026-10-07T09:30:00-04:00,6000.0,6001.0,5999.0,6000.5,100\n"
+        "2026-10-07T09:35:00-04:00,6000.5,6002.0,6000.0,6001.0,120\n",
+        encoding="utf-8",
+    )
+    bars = load_bars("MES", data="5m")
+    assert len(bars) == 2
+    assert bars[1].ts - bars[0].ts == timedelta(minutes=5)
+    assert bars[0].close == pytest.approx(6000.5)
+
+
+def test_load_bars_5m_missing_file_raises(tmp_path, monkeypatch):
+    import apex.backtest as backtest_mod
+
+    monkeypatch.setattr(backtest_mod, "CACHE_DIR", tmp_path)
+    with pytest.raises(FileNotFoundError):
+        load_bars("MES", data="5m")
+
+
+# --------------------------------------------------------------------- flatten window
+
+
+def test_flatten_window_is_hit_by_5m_spacing_but_not_1h_spacing():
+    # Real 5m bars land exactly on the 15:55-16:00 ET mandatory-flatten window;
+    # bars on the hour never do, which is the thing the task asked to confirm.
+    day = __import__("datetime").date(2026, 10, 7)
+
+    def bars_from(times):
+        return [Bar(t, 6000.0, 6000.5, 5999.5, 6000.0, 100.0) for t in times]
+
+    times_5m = [at_et(day, 15, 45) + timedelta(minutes=5 * i) for i in range(6)]
+    bars_5m = bars_from(times_5m)
+    signals_5m = [SetupSignal("RMA", "LONG", "A") for _ in bars_5m]
+    sink_5m: list = []
+    run_walk_forward("MES", "RMA", bars_5m, "50K", "EOD", signals=signals_5m,
+                     i_start=0, i_end=len(bars_5m), flatten_sink=sink_5m)
+    assert len(sink_5m) == 1
+    assert sink_5m[0].time() == __import__("datetime").time(15, 55)
+
+    times_1h = [at_et(day, h, 0) for h in (13, 14, 15, 16, 17, 18)]
+    bars_1h = bars_from(times_1h)
+    signals_1h = [SetupSignal("RMA", "LONG", "A") for _ in bars_1h]
+    sink_1h: list = []
+    run_walk_forward("MES", "RMA", bars_1h, "50K", "EOD", signals=signals_1h,
+                     i_start=0, i_end=len(bars_1h), flatten_sink=sink_1h)
+    assert len(sink_1h) == 0
 
 
 # --------------------------------------------------------------------- no-lookahead

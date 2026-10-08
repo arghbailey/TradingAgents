@@ -10,7 +10,9 @@ import pytest
 from apex.calendar import ET, at_et
 from apex.market import Bar
 from apex.sweep import (
+    TIMEFRAMES_5M,
     filter_signals,
+    resample,
     resample_count,
     resample_daily,
     split_index,
@@ -59,6 +61,29 @@ def test_resample_count_is_causal_prefix_stable():
     bars = _bars(10)
     short = resample_count(bars[:6], 2)
     long = resample_count(bars, 2)
+    assert short == long[: len(short)]
+
+
+def _bars_5m(n: int) -> list[Bar]:
+    day = date(2026, 10, 7)
+    start = at_et(day, 9, 30)
+    out = []
+    for i in range(n):
+        ts = start + timedelta(minutes=5 * i)
+        price = 100.0 + i
+        out.append(Bar(ts, price, price + 1, price - 1, price + 0.5, 10.0))
+    return out
+
+
+def test_timeframes_5m_are_native_5m_bar_counts():
+    assert TIMEFRAMES_5M == {"5m": 1, "15m": 3, "30m": 6, "1h": 12}
+
+
+def test_resample_from_5m_is_causal_prefix_stable():
+    bars = _bars_5m(30)
+    short = resample(bars[:18], "15m", data="5m")
+    long = resample(bars, "15m", data="5m")
+    assert len(long) == 30 // 3
     assert short == long[: len(short)]
 
 

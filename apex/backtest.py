@@ -36,7 +36,7 @@ from .config import (
     get_tier,
 )
 from .market import Bar, CsvMarketData, Indicators, compute_indicators
-from .risk import AccountState, ApexRiskGovernor, MarketContext, OrderProposal, Verdict
+from .risk import AccountState, ApexRiskGovernor, MarketContext, OrderProposal, SessionPhase, Verdict, session_phase
 from .setups import SETUPS, SetupSignal, _swing_points, detect_setup
 
 # ----------------------------------------------------------------------- constants
@@ -58,8 +58,8 @@ MIN_BARS_FOR_SIGNAL = 30
 # ----------------------------------------------------------------------- data
 
 
-def cache_path(symbol: str) -> Path:
-    return CACHE_DIR / f"{symbol}_1h.csv"
+def cache_path(symbol: str, data: str = "1h") -> Path:
+    return CACHE_DIR / f"{symbol}_{data}.csv"
 
 
 def fetch_and_cache(symbol: str, period: str = "730d") -> Path:
@@ -81,12 +81,21 @@ def fetch_and_cache(symbol: str, period: str = "730d") -> Path:
     return path
 
 
-def load_bars(symbol: str, refresh: bool = False) -> list[Bar]:
-    if refresh:
-        p = cache_path(symbol)
-        if p.exists():
-            p.unlink()
-    path = fetch_and_cache(symbol)
+def load_bars(symbol: str, refresh: bool = False, data: str = "1h") -> list[Bar]:
+    """``data="1h"`` fetches/caches yfinance bars as before. ``data="5m"`` reads the
+    real, pre-pulled ``results/backtest_data/<SYM>_5m.csv`` (see 5m_SOURCE.md) --
+    there is no yfinance 5m source, so ``refresh`` only applies to ``"1h"``.
+    """
+    if data == "1h":
+        if refresh:
+            p = cache_path(symbol, data)
+            if p.exists():
+                p.unlink()
+        path = fetch_and_cache(symbol)
+    else:
+        path = cache_path(symbol, data)
+        if not path.exists():
+            raise FileNotFoundError(f"no cached {data} bars for {symbol} at {path}")
     far_future = datetime(2100, 1, 1, tzinfo=ET)
     return CsvMarketData(path).bars(symbol, until=far_future)
 
@@ -265,6 +274,7 @@ def run_walk_forward(symbol: str, setup_name: str, bars: list[Bar], tier_name: s
                      eval_type: str,
                      signals: list[SetupSignal | None] | None = None,
                      i_start: int | None = None, i_end: int | None = None,
+                     flatten_sink: list[datetime] | None = None,
                      ) -> tuple[list[Trade], AccountState, str | None]:
     """Bar-by-bar walk-forward for one setup/symbol. Returns closed trades, the
     long-running account they were traded through (sizing, DD and daily-loss are all
@@ -275,6 +285,11 @@ def run_walk_forward(symbol: str, setup_name: str, bars: list[Bar], tier_name: s
     the whole series) without truncating ``bars`` itself, so a trade opened near the
     end of a window can still exit on bars after it. Used by ``apex.sweep`` to run a
     fresh account over a train or holdout slice of one causal signal series.
+
+    ``flatten_sink``, if given, collects the fill timestamp of every signal bar that
+    lands in the governor's 15:55-16:00 ET mandatory-flatten window (the rule is
+    always rejected there; this just confirms real bar timestamps actually fall in
+    that 5-minute-wide window -- on 1h bars, which land on the hour, they never do).
     """
     spec = get_contract(symbol)
     tier = get_tier(tier_name)
@@ -303,6 +318,8 @@ def run_walk_forward(symbol: str, setup_name: str, bars: list[Bar], tier_name: s
             continue
 
         fill_bar = bars[i + 1]
+        if flatten_sink is not None and session_phase(fill_bar.ts) is SessionPhase.FLATTEN:
+            flatten_sink.append(fill_bar.ts)
         entry_raw = fill_bar.open
         order = OrderProposal(symbol, sig.direction, tier.max_contracts_micro, entry_raw,
                               stop_pts, sig.grade)
@@ -410,20 +427,22 @@ class BacktestResult:
     beats_bh: bool
     eval_pass_fraction: float
     eval_windows: int
+    flatten_events: int = 0
 
 
 def backtest_symbol_setup(symbol: str, setup_name: str, bars: list[Bar], tier_name: str,
                           eval_type: str,
                           signals: list[SetupSignal | None] | None = None) -> BacktestResult:
+    flatten_sink: list[datetime] = []
     trades, account, blown_date = run_walk_forward(symbol, setup_name, bars, tier_name, eval_type,
-                                                    signals=signals)
+                                                    signals=signals, flatten_sink=flatten_sink)
     net = round(sum(t.pnl for t in trades), 2)
     wins = sum(1 for t in trades if t.pnl > 0)
     win_rate = round(wins / len(trades), 4) if trades else 0.0
     bh = buy_and_hold_pnl(bars, symbol)
     frac, nwin = eval_window_fraction(trades, tier_name, eval_type)
     return BacktestResult(symbol, setup_name, len(trades), net, win_rate, account.failed,
-                          blown_date, bh, net > bh, frac, nwin)
+                          blown_date, bh, net > bh, frac, nwin, len(flatten_sink))
 
 
 # ----------------------------------------------------------------------- CLI
@@ -433,25 +452,26 @@ def _render_markdown(results: list[BacktestResult], tier_name: str, eval_type: s
     lines = [
         f"# Apex WSGTA backtest ({tier_name}, {eval_type})",
         "",
-        "| Symbol | Setup | Trades | Net PnL | Win rate | Eval blown | Buy&Hold PnL | Beats B&H | Eval pass frac | Windows |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Symbol | Setup | Trades | Net PnL | Win rate | Eval blown | Buy&Hold PnL | Beats B&H | Eval pass frac | Windows | Flatten events |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         lines.append(
             f"| {r.symbol} | {r.setup} | {r.trades} | {r.net_pnl:.2f} | {r.win_rate:.2%} | "
             f"{'YES ' + (r.eval_blown_date or '') if r.eval_blown else 'no'} | {r.buy_hold_pnl:.2f} | "
-            f"{'YES' if r.beats_bh else 'no'} | {r.eval_pass_fraction:.2%} | {r.eval_windows} |"
+            f"{'YES' if r.beats_bh else 'no'} | {r.eval_pass_fraction:.2%} | {r.eval_windows} | {r.flatten_events} |"
         )
     return "\n".join(lines) + "\n"
 
 
 def _print_table(results: list[BacktestResult]) -> None:
-    header = f"{'Symbol':<7}{'Setup':<8}{'Trades':>7}{'NetPnL':>10}{'WinRate':>9}{'Blown':>7}{'B&H':>10}{'BeatsBH':>9}{'EvalPass':>10}"
+    header = (f"{'Symbol':<7}{'Setup':<8}{'Trades':>7}{'NetPnL':>10}{'WinRate':>9}{'Blown':>7}"
+             f"{'B&H':>10}{'BeatsBH':>9}{'EvalPass':>10}{'Flatten':>9}")
     print(header)
     for r in results:
         print(f"{r.symbol:<7}{r.setup:<8}{r.trades:>7}{r.net_pnl:>10.2f}{r.win_rate:>9.2%}"
               f"{('Y' if r.eval_blown else 'n'):>7}{r.buy_hold_pnl:>10.2f}"
-              f"{('Y' if r.beats_bh else 'n'):>9}{r.eval_pass_fraction:>10.2%}")
+              f"{('Y' if r.beats_bh else 'n'):>9}{r.eval_pass_fraction:>10.2%}{r.flatten_events:>9}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -460,7 +480,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--setup", choices=[*SETUPS, "all"], default="all")
     ap.add_argument("--tier", default="50K")
     ap.add_argument("--eval-type", default="EOD")
-    ap.add_argument("--refresh", action="store_true", help="re-download cached bars")
+    ap.add_argument("--data", choices=["1h", "5m"], default="1h", help="bar source")
+    ap.add_argument("--refresh", action="store_true", help="re-download cached bars (1h only)")
     ap.add_argument("--out-dir", default="results/backtest")
     args = ap.parse_args(argv)
 
@@ -469,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[BacktestResult] = []
     for symbol in symbols:
-        bars = load_bars(symbol, refresh=args.refresh)
+        bars = load_bars(symbol, refresh=args.refresh, data=args.data)
         signals = compute_signals(symbol, bars)  # one indicator pass, shared by every setup
         for setup_name in setup_names:
             results.append(backtest_symbol_setup(symbol, setup_name, bars, args.tier, args.eval_type,
@@ -480,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-    report_path = out_dir / f"report_{args.tier}_{args.eval_type}_{stamp}.md"
+    report_path = out_dir / f"report_{args.data}_{args.tier}_{args.eval_type}_{stamp}.md"
     report_path.write_text(_render_markdown(results, args.tier, args.eval_type), encoding="utf-8")
     print(f"\nwrote {report_path}")
     return 0
