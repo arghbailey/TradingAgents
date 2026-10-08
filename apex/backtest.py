@@ -264,11 +264,18 @@ def compute_signals(symbol: str, bars: list[Bar],
 def run_walk_forward(symbol: str, setup_name: str, bars: list[Bar], tier_name: str,
                      eval_type: str,
                      signals: list[SetupSignal | None] | None = None,
+                     i_start: int | None = None, i_end: int | None = None,
                      ) -> tuple[list[Trade], AccountState, str | None]:
     """Bar-by-bar walk-forward for one setup/symbol. Returns closed trades, the
     long-running account they were traded through (sizing, DD and daily-loss are all
     governed live), and the date the account first breached (if any; once breached the
-    governor rejects every further order on its own, same as live)."""
+    governor rejects every further order on its own, same as live).
+
+    ``i_start``/``i_end`` restrict which bar indices may open a *new* trade (default:
+    the whole series) without truncating ``bars`` itself, so a trade opened near the
+    end of a window can still exit on bars after it. Used by ``apex.sweep`` to run a
+    fresh account over a train or holdout slice of one causal signal series.
+    """
     spec = get_contract(symbol)
     tier = get_tier(tier_name)
     account = AccountState.fresh(tier, EvaluationType.parse(eval_type))
@@ -280,8 +287,9 @@ def run_walk_forward(symbol: str, setup_name: str, bars: list[Bar], tier_name: s
     trades: list[Trade] = []
     blown_date: str | None = None
     current_day: date | None = None
-    i = MIN_BARS_FOR_SIGNAL
-    n = len(bars)
+    i = i_start if i_start is not None else MIN_BARS_FOR_SIGNAL
+    n = (i_end if i_end is not None else len(bars))
+    n = min(n, len(bars))
     while i < n - 1:
         day = bars[i].ts.date()
         if current_day is not None and day != current_day:
